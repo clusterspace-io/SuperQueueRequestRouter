@@ -246,6 +246,10 @@ func Get_Record(c echo.Context) error {
 		return c.String(500, "Failed to forward request")
 	}
 
+	if resp.StatusCode == 204 {
+		return c.String(204, "")
+	}
+
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		atomic.AddInt64(&HTTP500s, 1)
@@ -302,7 +306,7 @@ func Post_AckRecord(c echo.Context) error {
 	if partition == nil {
 		return c.String(404, "Partition not found")
 	}
-	logger.Debug("Got random partition ", partition.Address)
+	logger.Debug("Got ack partition ", partition.Address)
 
 	newURL := partition.Address + "/ack/" + recordID
 	newReq, err := http.NewRequest(req.Method, newURL, nil)
@@ -327,6 +331,8 @@ func Post_AckRecord(c echo.Context) error {
 		logger.Error(err)
 		return c.String(500, "Failed to forward request")
 	}
+
+	logger.Debug("Got status back for ack ", resp.StatusCode)
 
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
