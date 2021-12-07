@@ -3,6 +3,7 @@ package main
 import (
 	"SuperQueueRequestRouter/logger"
 	"bytes"
+	"encoding/json"
 	"io/ioutil"
 	"net/http"
 	"sync/atomic"
@@ -65,7 +66,7 @@ func (s *HTTPServer) registerRoutes() {
 
 	s.Echo.GET("/partitions", Get_Partitions)
 	s.Echo.POST("/record", Post_Record, PostRecordLatencyCounter)
-	// s.Echo.GET("/record", Get_Record, GetRecordLatencyCounter)
+	s.Echo.GET("/record", Get_Record, GetRecordLatencyCounter)
 
 	// s.Echo.POST("/ack/:recordID", Post_AckRecord, AckRecordLatencyCounter)
 	// s.Echo.POST("/nack/:recordID", Post_NackRecord, NackRecordLatencyCounter)
@@ -201,20 +202,68 @@ func Post_Record(c echo.Context) error {
 	return c.String(resp.StatusCode, string(respBody))
 }
 
-// func Get_Record(c echo.Context) error {
-// 	defer atomic.AddInt64(&GetRecordRequests, 1)
+func Get_Record(c echo.Context) error {
+	req := c.Request()
+	defer atomic.AddInt64(&GetRecordRequests, 1)
 
-// 	if err != nil {
-// 		atomic.AddInt64(&HTTP500s, 1)
-// 		return c.String(500, "Failed to dequeue record")
-// 	}
-// 	// Empty
-// 	if item == nil {
-// 		atomic.AddInt64(&EmptyQueueResponses, 1)
-// 		return c.String(http.StatusNoContent, "Empty")
-// 	}
+	// Get queue header
+	queue := c.Request().Header.Get("sq-queue")
+	if queue == "" {
+		atomic.AddInt64(&HTTP400s, 1)
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid queue header")
+	}
 
-// }
+	// Make post request on requester behalf
+	client := http.Client{}
+	randomPartition := GetRandomPartition(queue)
+	logger.Debug("Got random partition ", randomPartition.Address)
+	if randomPartition == nil {
+		return echo.NewHTTPError(404, "Queue not found")
+	}
+
+	newURL := randomPartition.Address + "/record"
+	newReq, err := http.NewRequest(req.Method, newURL, nil)
+	if err != nil {
+		atomic.AddInt64(&HTTP500s, 1)
+		logger.Error("failed to assemble forwarding request")
+		logger.Error(err)
+		return c.String(500, "Failed to assemble forwarding request")
+	}
+
+	// Forward headers
+	newReq.Header = make(http.Header)
+	for h, val := range req.Header {
+		// TODO: Filter any headers out that are reserved
+		newReq.Header[h] = val
+	}
+
+	resp, err := client.Do(newReq)
+	if err != nil {
+		atomic.AddInt64(&HTTP500s, 1)
+		logger.Error("failed to forward request")
+		logger.Error(err)
+		return c.String(500, "Failed to forward request")
+	}
+
+	respBody, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		atomic.AddInt64(&HTTP500s, 1)
+		logger.Error("parse response body")
+		logger.Error(err)
+		return c.String(500, "parse response body")
+	}
+
+	var jsonBody map[string]interface{}
+	err = json.Unmarshal(respBody, &jsonBody)
+	if err != nil {
+		atomic.AddInt64(&HTTP500s, 1)
+		logger.Error("json parse response body")
+		logger.Error(err)
+		return c.String(500, "json parse response body")
+	}
+
+	return c.JSON(resp.StatusCode, jsonBody)
+}
 
 // func Post_AckRecord(c echo.Context) error {
 // 	recordID := c.Param("recordID")
