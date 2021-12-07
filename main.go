@@ -20,10 +20,12 @@ func main() {
 				&Partition{
 					Weight:  1,
 					Address: "http://localhost:8080",
+					ID:      "aaa",
 				},
 				&Partition{
 					Weight:  1,
 					Address: "http://localhost:8081",
+					ID:      "bbb",
 				},
 			},
 		},

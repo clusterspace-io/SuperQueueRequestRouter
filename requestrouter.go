@@ -17,6 +17,7 @@ type Partition struct {
 	Weight int
 	// Including the protocol
 	Address string
+	ID      string
 }
 
 // Gets a random partition from a queue

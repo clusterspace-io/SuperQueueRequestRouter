@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io/ioutil"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -68,7 +69,7 @@ func (s *HTTPServer) registerRoutes() {
 	s.Echo.POST("/record", Post_Record, PostRecordLatencyCounter)
 	s.Echo.GET("/record", Get_Record, GetRecordLatencyCounter)
 
-	// s.Echo.POST("/ack/:recordID", Post_AckRecord, AckRecordLatencyCounter)
+	s.Echo.POST("/ack/:recordID", Post_AckRecord, AckRecordLatencyCounter)
 	// s.Echo.POST("/nack/:recordID", Post_NackRecord, NackRecordLatencyCounter)
 }
 
@@ -203,8 +204,8 @@ func Post_Record(c echo.Context) error {
 }
 
 func Get_Record(c echo.Context) error {
-	req := c.Request()
 	defer atomic.AddInt64(&GetRecordRequests, 1)
+	req := c.Request()
 
 	// Get queue header
 	queue := c.Request().Header.Get("sq-queue")
@@ -265,24 +266,78 @@ func Get_Record(c echo.Context) error {
 	return c.JSON(resp.StatusCode, jsonBody)
 }
 
-// func Post_AckRecord(c echo.Context) error {
-// 	recordID := c.Param("recordID")
-// 	if recordID == "" {
-// 		atomic.AddInt64(&HTTP400s, 1)
-// 		return c.String(400, "No record ID given")
-// 	}
+func Post_AckRecord(c echo.Context) error {
+	req := c.Request()
 
-// 	partitionID := strings.Split(recordID, "_")[0]
-// 	if partitionID == "" {
-// 		return c.String(http.StatusBadRequest, "Bad record ID given")
-// 	}
+	// Get queue header
+	queue := c.Request().Header.Get("sq-queue")
+	if queue == "" {
+		atomic.AddInt64(&HTTP400s, 1)
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid queue header")
+	}
+	recordID := c.Param("recordID")
+	if recordID == "" {
+		atomic.AddInt64(&HTTP400s, 1)
+		return c.String(400, "No record ID given")
+	}
 
-// 	if err != nil {
-// 		atomic.AddInt64(&HTTP500s, 1)
-// 		return c.String(500, "Failed to ack record")
-// 	}
-// 	return c.String(200, "")
-// }
+	partitionID := strings.Split(recordID, "_")[0]
+	if partitionID == "" {
+		return c.String(http.StatusBadRequest, "Bad record ID given")
+	}
+
+	// Make post request on requester behalf
+	client := http.Client{}
+	// Get a specific partition
+	partitions, exists := RR.PartitionMap[queue]
+	if !exists {
+		return echo.NewHTTPError(404, "Queue not found")
+	}
+	var partition *Partition
+	for _, i := range partitions {
+		if i.ID == partitionID {
+			partition = i
+		}
+	}
+	if partition == nil {
+		return c.String(404, "Partition not found")
+	}
+	logger.Debug("Got random partition ", partition.Address)
+
+	newURL := partition.Address + "/ack/" + recordID
+	newReq, err := http.NewRequest(req.Method, newURL, nil)
+	if err != nil {
+		atomic.AddInt64(&HTTP500s, 1)
+		logger.Error("failed to assemble forwarding request")
+		logger.Error(err)
+		return c.String(500, "Failed to assemble forwarding request")
+	}
+
+	// Forward headers
+	newReq.Header = make(http.Header)
+	for h, val := range req.Header {
+		// TODO: Filter any headers out that are reserved
+		newReq.Header[h] = val
+	}
+
+	resp, err := client.Do(newReq)
+	if err != nil {
+		atomic.AddInt64(&HTTP500s, 1)
+		logger.Error("failed to forward request")
+		logger.Error(err)
+		return c.String(500, "Failed to forward request")
+	}
+
+	respBody, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		atomic.AddInt64(&HTTP500s, 1)
+		logger.Error("parse response body")
+		logger.Error(err)
+		return c.String(500, "parse response body")
+	}
+
+	return c.JSON(resp.StatusCode, respBody)
+}
 
 // func Post_NackRecord(c echo.Context) error {
 // 	recordID := c.Param("recordID")
