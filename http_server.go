@@ -3,7 +3,6 @@ package main
 import (
 	"SuperQueueRequestRouter/logger"
 	"bytes"
-	"encoding/json"
 	"io/ioutil"
 	"net/http"
 	"strings"
@@ -200,7 +199,7 @@ func Post_Record(c echo.Context) error {
 		return c.String(500, "parse response body")
 	}
 
-	return c.String(resp.StatusCode, string(respBody))
+	return c.Blob(resp.StatusCode, resp.Header.Get("content-type"), respBody)
 }
 
 func Get_Record(c echo.Context) error {
@@ -258,16 +257,7 @@ func Get_Record(c echo.Context) error {
 		return c.String(500, "parse response body")
 	}
 
-	var jsonBody map[string]interface{}
-	err = json.Unmarshal(respBody, &jsonBody)
-	if err != nil {
-		atomic.AddInt64(&HTTP500s, 1)
-		logger.Error("json parse response body")
-		logger.Error(err)
-		return c.String(500, "json parse response body")
-	}
-
-	return c.JSON(resp.StatusCode, jsonBody)
+	return c.Blob(resp.StatusCode, resp.Header.Get("content-type"), respBody)
 }
 
 func Post_AckRecord(c echo.Context) error {
@@ -342,7 +332,7 @@ func Post_AckRecord(c echo.Context) error {
 		return c.String(500, "parse response body")
 	}
 
-	return c.JSON(resp.StatusCode, respBody)
+	return c.Blob(resp.StatusCode, resp.Header.Get("content-type"), respBody)
 }
 
 // func Post_NackRecord(c echo.Context) error {
