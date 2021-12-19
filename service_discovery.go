@@ -2,9 +2,12 @@ package main
 
 import (
 	"SuperQueueRequestRouter/logger"
+	"bytes"
 	"context"
+	"encoding/gob"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"strings"
 	"sync"
 	"time"
@@ -28,8 +31,11 @@ type PartitionSDRecord struct {
 	QueueName  string
 	Partition  string
 	UpdatedAt  time.Time
+	Address    string
 	IsDraining bool
 }
+
+type PartitionStoredRecord []PartitionSDRecord
 
 func TryEtcdConnect() {
 	logger.Debug("Starting etcd based service discovery")
@@ -65,7 +71,7 @@ func SetupPartitionCache() {
 	logger.Debug("Partition cache created")
 }
 
-func FetchQueuePartitionsFromEtcd(c context.Context, queue string) ([]*PartitionSDRecord, error) {
+func FetchQueuePartitionsFromEtcd(c context.Context, queue string) (*PartitionStoredRecord, error) {
 	ctx, cancelFunc := context.WithTimeout(c, 2*time.Second)
 	defer cancelFunc()
 	logger.Debug("Fetching queue partitions for queue ", queue)
@@ -74,7 +80,7 @@ func FetchQueuePartitionsFromEtcd(c context.Context, queue string) ([]*Partition
 		logger.Error("Error getting queue partitions")
 		return nil, err
 	}
-	vals := []*PartitionSDRecord{}
+	vals := PartitionStoredRecord{}
 	for _, i := range r.Kvs {
 		logger.Debug("Found partition key ", string(i.Key))
 		var record PartitionSDRecord
@@ -83,18 +89,60 @@ func FetchQueuePartitionsFromEtcd(c context.Context, queue string) ([]*Partition
 			logger.Error("Error when unmarshalling partition record")
 			return nil, err
 		}
-		vals = append(vals, &record)
+		vals = append(vals, record)
 	}
-	return vals, nil
+	return &vals, nil
 }
 
-func GetQueuePartition(c context.Context, queue string) ([]*PartitionSDRecord, error) {
+func GetQueuePartitions(c context.Context, queue string) (*PartitionStoredRecord, error) {
+	var record PartitionStoredRecord
 	// First check cache
+	val, found := PartitionCache.Get(queue)
+	if found {
+		logger.Debug("Found partition in cache for queue ", queue)
+		b, ok := val.([]byte)
+		if !ok {
+			logger.Error("Error converting cache to byte array")
+			return nil, fmt.Errorf("failed to convert cache value to byte array")
+		}
+		buf := bytes.NewBuffer(b)
+		decoder := gob.NewDecoder(buf)
+		err := decoder.Decode(&record)
+		if err != nil {
+			logger.Error("Error decoding buffer from cache")
+			return nil, err
+		}
+		return &record, nil
+	}
+	logger.Debug("Did not find partition in cache for queue ", queue, ", fetching from etcd")
 	// Get thundering herd lock otherwise
 	HerdLock.Lock()
 	defer HerdLock.Unlock()
-	// Check if
-	// Then fetch from etcd
+	// Check if we recently thundering herd blocked or do not have it
+	if val, exists := HerdMap[queue]; exists && val.After(time.Now().Add(-10*time.Second)) {
+		// Should be in cache now, run again
+		return GetQueuePartitions(c, queue)
+	}
+	// Otherwise we need to go get from etcd
+	r, err := FetchQueuePartitionsFromEtcd(c, queue)
+	if err != nil {
+		logger.Error("Error fetching queue partitions from etcd when backfilling cache")
+		return nil, err
+	}
 	// Fill cache and update map
+	var b bytes.Buffer
+	encoder := gob.NewEncoder(&b)
+	err = encoder.Encode(*r)
+	if err != nil {
+		logger.Error("Error encoding partition record when backfilling cache")
+		return nil, err
+	}
+	bb, err := ioutil.ReadAll(&b)
+	if err != nil {
+		logger.Error("Error reading bytes when backfilling cache")
+		return nil, err
+	}
+	PartitionCache.SetWithTTL(queue, bb, int64(len(bb)), 10*time.Second)
 	HerdMap[queue] = time.Now()
+	return r, nil
 }
