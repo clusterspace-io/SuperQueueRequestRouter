@@ -56,7 +56,7 @@ func StartHTTPServer() {
 	Server.registerRoutes()
 
 	logger.Info("Starting SuperQueueRequestRouter on port ", GetEnvOrDefault("HTTP_PORT", "9090"))
-	Server.Echo.Logger.Fatal(Server.Echo.Start(":" + GetEnvOrDefault("HTTP_PORT", "9090")))
+	Server.Echo.Logger.Info(Server.Echo.Start(":" + GetEnvOrDefault("HTTP_PORT", "9090")))
 }
 
 func (s *HTTPServer) registerRoutes() {

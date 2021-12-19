@@ -5,6 +5,10 @@ import (
 	"os"
 )
 
+var (
+	ETCD_HOSTS = os.Getenv("ETCD_HOSTS")
+)
+
 func GetEnvOrDefault(env, defaultVal string) string {
 	e := os.Getenv(env)
 	fmt.Printf("'%s'", e)
