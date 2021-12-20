@@ -14,27 +14,30 @@ func main() {
 	logger.Logger.Logger.SetLevel(logrus.DebugLevel)
 	logger.Info("Starting SuperQueueRequestRouter")
 	// Create request router
-	RR = &RequestRouter{
-		PartitionMap: map[string][]*Partition{
-			"test-queue": {
-				&Partition{
-					Weight:  1,
-					Address: "http://localhost:8080",
-					ID:      "aaa",
-				},
-				&Partition{
-					Weight:  1,
-					Address: "http://localhost:8081",
-					ID:      "bbb",
-				},
-			},
-		},
-	}
+	// RR = &RequestRouter{
+	// 	PartitionMap: map[string][]*Partition{
+	// 		"test-queue": {
+	// 			&Partition{
+	// 				Weight:  1,
+	// 				Address: "http://localhost:8080",
+	// 				ID:      "aaa",
+	// 			},
+	// 			&Partition{
+	// 				Weight:  1,
+	// 				Address: "http://localhost:8081",
+	// 				ID:      "bbb",
+	// 			},
+	// 		},
+	// 	},
+	// }
 
 	// Start http server
 	go func() {
 		StartHTTPServer()
 	}()
+
+	TryEtcdConnect()
+	SetupPartitionCache()
 
 	c := make(chan os.Signal)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
