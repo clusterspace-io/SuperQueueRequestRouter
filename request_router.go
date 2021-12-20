@@ -5,6 +5,10 @@ import (
 	"time"
 )
 
+type NackRecordRequest struct {
+	DelayMS *float64 `json:"delay_ms"`
+}
+
 // Gets a random partition from a queue
 func GetRandomPartition(p *PartitionStoredRecord) PartitionSDRecord {
 	rand.Seed(time.Now().UnixNano())

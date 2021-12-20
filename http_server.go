@@ -354,6 +354,19 @@ func Post_NackRecord(c echo.Context) error {
 		return c.String(http.StatusBadRequest, "Bad record ID given")
 	}
 
+	bodyBytes, err := ioutil.ReadAll(c.Request().Body)
+	if err != nil {
+		logger.Error("Failed to read body bytes:")
+		logger.Error(err)
+	}
+	c.Request().Body = ioutil.NopCloser(bytes.NewReader(bodyBytes))
+	body := new(NackRecordRequest)
+	if err := ValidateRequest(c, body); err != nil {
+		logger.Debug("Validation failed ", err)
+		atomic.AddInt64(&HTTP400s, 1)
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid body")
+	}
+
 	// Make post request on requester behalf
 	client := http.Client{}
 
@@ -371,7 +384,8 @@ func Post_NackRecord(c echo.Context) error {
 	logger.Debug("Got nack partition ", partition.Address)
 
 	newURL := partition.Address + "/nack/" + recordID
-	newReq, err := http.NewRequest(req.Method, newURL, nil)
+	bodyBuffer := bytes.NewBuffer(bodyBytes)
+	newReq, err := http.NewRequest(req.Method, newURL, bodyBuffer)
 	if err != nil {
 		atomic.AddInt64(&HTTP500s, 1)
 		logger.Error("failed to assemble forwarding request")
