@@ -69,7 +69,7 @@ func (s *HTTPServer) registerRoutes() {
 	s.Echo.GET("/record", Get_Record, GetRecordLatencyCounter)
 
 	s.Echo.POST("/ack/:recordID", Post_AckRecord, AckRecordLatencyCounter)
-	// s.Echo.POST("/nack/:recordID", Post_NackRecord, NackRecordLatencyCounter)
+	s.Echo.POST("/nack/:recordID", Post_NackRecord, NackRecordLatencyCounter)
 }
 
 func PostRecordLatencyCounter(next echo.HandlerFunc) echo.HandlerFunc {
@@ -334,22 +334,75 @@ func Post_AckRecord(c echo.Context) error {
 	return c.Blob(resp.StatusCode, resp.Header.Get("content-type"), respBody)
 }
 
-// func Post_NackRecord(c echo.Context) error {
-// 	recordID := c.Param("recordID")
-// 	if recordID == "" {
-// 		atomic.AddInt64(&HTTP400s, 1)
-// 		return c.String(400, "No record ID given")
-// 	}
+func Post_NackRecord(c echo.Context) error {
+	req := c.Request()
 
-// 	partitionID := strings.Split(recordID, "_")[0]
-// 	if partitionID == "" {
-// 		return c.String(http.StatusBadRequest, "Bad record ID given")
-// 	}
+	// Get queue header
+	queue := c.Request().Header.Get("sq-queue")
+	if queue == "" {
+		atomic.AddInt64(&HTTP400s, 1)
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid queue header")
+	}
+	recordID := c.Param("recordID")
+	if recordID == "" {
+		atomic.AddInt64(&HTTP400s, 1)
+		return c.String(400, "No record ID given")
+	}
 
-// 	if err != nil {
-// 		logger.Error(err)
-// 		atomic.AddInt64(&HTTP500s, 1)
-// 		return c.String(500, "Failed to ack record")
-// 	}
-// 	return c.String(200, "")
-// }
+	partitionID := strings.Split(recordID, "_")[0]
+	if partitionID == "" {
+		return c.String(http.StatusBadRequest, "Bad record ID given")
+	}
+
+	// Make post request on requester behalf
+	client := http.Client{}
+
+	// Get known partitions for a queue
+	partitions, err := GetQueuePartitions(context.Background(), queue)
+	if err != nil {
+		logger.Error("Error getting random partitions for queue ", queue)
+		logger.Error(err)
+		return c.String(500, "Failed to get partitions for queue")
+	}
+	if len(*partitions) == 0 {
+		return echo.NewHTTPError(404, "Queue not found")
+	}
+	partition := GetPartition(partitions, partitionID)
+	logger.Debug("Got nack partition ", partition.Address)
+
+	newURL := partition.Address + "/nack/" + recordID
+	newReq, err := http.NewRequest(req.Method, newURL, nil)
+	if err != nil {
+		atomic.AddInt64(&HTTP500s, 1)
+		logger.Error("failed to assemble forwarding request")
+		logger.Error(err)
+		return c.String(500, "Failed to assemble forwarding request")
+	}
+
+	// Forward headers
+	newReq.Header = make(http.Header)
+	for h, val := range req.Header {
+		// TODO: Filter any headers out that are reserved
+		newReq.Header[h] = val
+	}
+
+	resp, err := client.Do(newReq)
+	if err != nil {
+		atomic.AddInt64(&HTTP500s, 1)
+		logger.Error("failed to forward request")
+		logger.Error(err)
+		return c.String(500, "Failed to forward request")
+	}
+
+	logger.Debug("Got status back for nack ", resp.StatusCode)
+
+	respBody, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		atomic.AddInt64(&HTTP500s, 1)
+		logger.Error("parse response body")
+		logger.Error(err)
+		return c.String(500, "parse response body")
+	}
+
+	return c.Blob(resp.StatusCode, resp.Header.Get("content-type"), respBody)
+}
