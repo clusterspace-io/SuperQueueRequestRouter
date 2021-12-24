@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 )
@@ -17,4 +18,9 @@ func GetEnvOrDefault(env, defaultVal string) string {
 	} else {
 		return e
 	}
+}
+
+func CheckFlags() {
+	flag.StringVar(&ETCD_HOSTS, "etcd-hosts", ETCD_HOSTS, "Specifies the etcd hosts")
+	flag.Parse()
 }

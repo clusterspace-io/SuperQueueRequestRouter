@@ -39,6 +39,7 @@ type PartitionStoredRecord []PartitionSDRecord
 
 func TryEtcdConnect() {
 	logger.Debug("Starting etcd based service discovery")
+	CheckFlags()
 	hosts := strings.Split(ETCD_HOSTS, ",")
 	logger.Debug("Using hosts: ", hosts)
 	var err error
