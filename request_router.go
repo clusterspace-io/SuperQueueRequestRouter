@@ -14,7 +14,7 @@ func GetRandomPartition(p *PartitionStoredRecord) *PartitionSDRecord {
 	var nonDrainingPartitions []PartitionSDRecord
 	for _, i := range *p {
 		if !i.IsDraining {
-			nonDrainingPartitions = append(nonDrainingPartitions)
+			nonDrainingPartitions = append(nonDrainingPartitions, i)
 		}
 	}
 	if len(nonDrainingPartitions) == 0 {
