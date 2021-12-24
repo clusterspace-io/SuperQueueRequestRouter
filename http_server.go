@@ -154,9 +154,9 @@ func Post_Record(c echo.Context) error {
 	if len(*partitions) == 0 {
 		return echo.NewHTTPError(404, "Queue not found")
 	}
-
+	logger.Debug("Got partitions ", partitions)
 	randomPartition := GetRandomPartition(partitions)
-	logger.Debug("Got random partition ", randomPartition.Partition, " at ", randomPartition.Address)
+	logger.Debug("Got random partition ", randomPartition)
 
 	newURL := randomPartition.Address + "/record"
 	logger.Info("Sending body ", string(reqbody))
