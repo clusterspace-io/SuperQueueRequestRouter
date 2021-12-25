@@ -4,15 +4,16 @@ import (
 	"SuperQueueRequestRouter/logger"
 	"bytes"
 	"context"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type HTTPServer struct {
@@ -50,6 +51,7 @@ func StartHTTPServer() {
 		Echo: echoInstance,
 	}
 	Server.Echo.HideBanner = true
+	Server.Echo.Use(MetricsHandler)
 	Server.Echo.Use(middleware.Logger())
 	Server.Echo.Validator = &CustomValidator{validator: validator.New()}
 
@@ -65,55 +67,38 @@ func (s *HTTPServer) registerRoutes() {
 		return c.String(200, "y")
 	})
 
-	s.Echo.POST("/record", Post_Record, PostRecordLatencyCounter)
-	s.Echo.GET("/record", Get_Record, GetRecordLatencyCounter)
+	s.Echo.POST("/record", Post_Record)
+	s.Echo.GET("/record", Get_Record)
 
-	s.Echo.POST("/ack/:recordID", Post_AckRecord, AckRecordLatencyCounter)
-	s.Echo.POST("/nack/:recordID", Post_NackRecord, NackRecordLatencyCounter)
+	s.Echo.POST("/ack/:recordID", Post_AckRecord)
+	s.Echo.POST("/nack/:recordID", Post_NackRecord)
+
+	s.Echo.GET("/metrics", wrapPromHandler)
+	SetupMetrics()
 }
 
-func PostRecordLatencyCounter(next echo.HandlerFunc) echo.HandlerFunc {
+func MetricsHandler(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		start := time.Now()
-		if err := next(c); err != nil {
-			c.Error(err)
+		next(c) // Wait for all other handlers
+		TotalRequestsCounter.Inc()
+		theUrl := c.Request().URL.String()
+		// We don't want the cardinality of record ids destroying our metrics
+		if strings.HasPrefix(c.Request().URL.String(), "/ack") {
+			theUrl = "/ack"
+		} else if strings.HasPrefix(c.Request().URL.String(), "/nack") {
+			theUrl = "/nack"
 		}
-		atomic.AddInt64(&PostRecordLatency, int64(time.Since(start)))
+		HTTPResponsesMetric.WithLabelValues(fmt.Sprintf("%d", c.Response().Status), theUrl).Inc()
+		HTTPLatenciesMetric.WithLabelValues(fmt.Sprintf("%d", c.Response().Status), theUrl).Observe(float64(time.Since(start) / time.Millisecond))
 		return nil
 	}
 }
 
-func GetRecordLatencyCounter(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		start := time.Now()
-		if err := next(c); err != nil {
-			c.Error(err)
-		}
-		atomic.AddInt64(&GetRecordLatency, int64(time.Since(start)))
-		return nil
-	}
-}
-
-func AckRecordLatencyCounter(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		start := time.Now()
-		if err := next(c); err != nil {
-			c.Error(err)
-		}
-		atomic.AddInt64(&AckLatency, int64(time.Since(start)))
-		return nil
-	}
-}
-
-func NackRecordLatencyCounter(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		start := time.Now()
-		if err := next(c); err != nil {
-			c.Error(err)
-		}
-		atomic.AddInt64(&NackLatency, int64(time.Since(start)))
-		return nil
-	}
+func wrapPromHandler(c echo.Context) error {
+	h := promhttp.Handler()
+	h.ServeHTTP(c.Response(), c.Request())
+	return nil
 }
 
 func Post_Record(c echo.Context) error {
@@ -121,23 +106,19 @@ func Post_Record(c echo.Context) error {
 	reqbody, err := ioutil.ReadAll(c.Request().Body)
 	req.Body = ioutil.NopCloser(bytes.NewReader(reqbody))
 	defer req.Body.Close()
-	defer atomic.AddInt64(&PostRecordRequests, 1)
 	body := new(PostRecordRequest)
 	if err := ValidateRequest(c, body); err != nil {
 		logger.Debug("Validation failed ", err)
-		atomic.AddInt64(&HTTP400s, 1)
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid body")
 	}
 
 	if err != nil {
-		atomic.AddInt64(&HTTP500s, 1)
 		return c.String(500, "Failed to parse body")
 	}
 
 	// Get queue header
 	queue := c.Request().Header.Get("sq-queue")
 	if queue == "" {
-		atomic.AddInt64(&HTTP400s, 1)
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid queue header")
 	}
 
@@ -162,7 +143,6 @@ func Post_Record(c echo.Context) error {
 	logger.Info("Sending body ", string(reqbody))
 	newReq, err := http.NewRequest(req.Method, newURL, bytes.NewReader(reqbody))
 	if err != nil {
-		atomic.AddInt64(&HTTP500s, 1)
 		logger.Error("failed to assemble forwarding request")
 		logger.Error(err)
 		return c.String(500, "Failed to assemble forwarding request")
@@ -177,7 +157,6 @@ func Post_Record(c echo.Context) error {
 
 	resp, err := client.Do(newReq)
 	if err != nil {
-		atomic.AddInt64(&HTTP500s, 1)
 		logger.Error("failed to forward request")
 		logger.Error(err)
 		return c.String(500, "Failed to forward request")
@@ -185,7 +164,6 @@ func Post_Record(c echo.Context) error {
 
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		atomic.AddInt64(&HTTP500s, 1)
 		logger.Error("parse response body")
 		logger.Error(err)
 		return c.String(500, "parse response body")
@@ -195,13 +173,11 @@ func Post_Record(c echo.Context) error {
 }
 
 func Get_Record(c echo.Context) error {
-	defer atomic.AddInt64(&GetRecordRequests, 1)
 	req := c.Request()
 
 	// Get queue header
 	queue := c.Request().Header.Get("sq-queue")
 	if queue == "" {
-		atomic.AddInt64(&HTTP400s, 1)
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid queue header")
 	}
 
@@ -225,7 +201,6 @@ func Get_Record(c echo.Context) error {
 	newURL := randomPartition.Address + "/record"
 	newReq, err := http.NewRequest(req.Method, newURL, nil)
 	if err != nil {
-		atomic.AddInt64(&HTTP500s, 1)
 		logger.Error("failed to assemble forwarding request")
 		logger.Error(err)
 		return c.String(500, "Failed to assemble forwarding request")
@@ -240,7 +215,6 @@ func Get_Record(c echo.Context) error {
 
 	resp, err := client.Do(newReq)
 	if err != nil {
-		atomic.AddInt64(&HTTP500s, 1)
 		logger.Error("failed to forward request")
 		logger.Error(err)
 		return c.String(500, "Failed to forward request")
@@ -252,7 +226,6 @@ func Get_Record(c echo.Context) error {
 
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		atomic.AddInt64(&HTTP500s, 1)
 		logger.Error("parse response body")
 		logger.Error(err)
 		return c.String(500, "parse response body")
@@ -267,12 +240,10 @@ func Post_AckRecord(c echo.Context) error {
 	// Get queue header
 	queue := c.Request().Header.Get("sq-queue")
 	if queue == "" {
-		atomic.AddInt64(&HTTP400s, 1)
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid queue header")
 	}
 	recordID := c.Param("recordID")
 	if recordID == "" {
-		atomic.AddInt64(&HTTP400s, 1)
 		return c.String(400, "No record ID given")
 	}
 
@@ -300,7 +271,6 @@ func Post_AckRecord(c echo.Context) error {
 	newURL := partition.Address + "/ack/" + recordID
 	newReq, err := http.NewRequest(req.Method, newURL, nil)
 	if err != nil {
-		atomic.AddInt64(&HTTP500s, 1)
 		logger.Error("failed to assemble forwarding request")
 		logger.Error(err)
 		return c.String(500, "Failed to assemble forwarding request")
@@ -315,7 +285,6 @@ func Post_AckRecord(c echo.Context) error {
 
 	resp, err := client.Do(newReq)
 	if err != nil {
-		atomic.AddInt64(&HTTP500s, 1)
 		logger.Error("failed to forward request")
 		logger.Error(err)
 		return c.String(500, "Failed to forward request")
@@ -325,7 +294,6 @@ func Post_AckRecord(c echo.Context) error {
 
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		atomic.AddInt64(&HTTP500s, 1)
 		logger.Error("parse response body")
 		logger.Error(err)
 		return c.String(500, "parse response body")
@@ -340,12 +308,10 @@ func Post_NackRecord(c echo.Context) error {
 	// Get queue header
 	queue := c.Request().Header.Get("sq-queue")
 	if queue == "" {
-		atomic.AddInt64(&HTTP400s, 1)
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid queue header")
 	}
 	recordID := c.Param("recordID")
 	if recordID == "" {
-		atomic.AddInt64(&HTTP400s, 1)
 		return c.String(400, "No record ID given")
 	}
 
@@ -363,7 +329,6 @@ func Post_NackRecord(c echo.Context) error {
 	body := new(NackRecordRequest)
 	if err := ValidateRequest(c, body); err != nil {
 		logger.Debug("Validation failed ", err)
-		atomic.AddInt64(&HTTP400s, 1)
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid body")
 	}
 
@@ -387,7 +352,6 @@ func Post_NackRecord(c echo.Context) error {
 	bodyBuffer := bytes.NewBuffer(bodyBytes)
 	newReq, err := http.NewRequest(req.Method, newURL, bodyBuffer)
 	if err != nil {
-		atomic.AddInt64(&HTTP500s, 1)
 		logger.Error("failed to assemble forwarding request")
 		logger.Error(err)
 		return c.String(500, "Failed to assemble forwarding request")
@@ -402,7 +366,6 @@ func Post_NackRecord(c echo.Context) error {
 
 	resp, err := client.Do(newReq)
 	if err != nil {
-		atomic.AddInt64(&HTTP500s, 1)
 		logger.Error("failed to forward request")
 		logger.Error(err)
 		return c.String(500, "Failed to forward request")
@@ -412,7 +375,6 @@ func Post_NackRecord(c echo.Context) error {
 
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		atomic.AddInt64(&HTTP500s, 1)
 		logger.Error("parse response body")
 		logger.Error(err)
 		return c.String(500, "parse response body")

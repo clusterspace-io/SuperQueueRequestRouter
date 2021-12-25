@@ -1,25 +1,27 @@
 package main
 
+import "github.com/prometheus/client_golang/prometheus"
+
 var (
-	InFlightMessages      int64 = 0
-	TotalInFlightMessages int64 = 0
-	QueuedMessages        int64 = 0
-	TotalQueuedMessages   int64 = 0
-	DelayedMessages       int64 = 0
-	TimedoutMessages      int64 = 0
-	AckedMessages         int64 = 0
-	NackedMessages        int64 = 0
-	PostRecordRequests    int64 = 0
-	PostRecordLatency     int64 = 0
-	GetRecordRequests     int64 = 0
-	GetRecordLatency      int64 = 0
-	AckMisses             int64 = 0
-	NackMisses            int64 = 0
-	EmptyQueueResponses   int64 = 0
-	FullQueueResponses    int64 = 0
-	TotalRequests         int64 = 0
-	HTTP500s              int64 = 0
-	HTTP400s              int64 = 0
-	AckLatency            int64 = 0
-	NackLatency           int64 = 0
+	TotalRequestsCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "total_reqs",
+		Help: "Total number of http requests",
+	})
+
+	HTTPResponsesMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "http_responses",
+		Help: "Total number of http requests",
+	}, []string{"code", "endpoint"})
+
+	HTTPLatenciesMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "http_latency",
+		Help:    "Latency of HTTP responses in milliseconds",
+		Buckets: prometheus.ExponentialBuckets(1, 3, 10),
+	}, []string{"code", "endpoint"})
 )
+
+func SetupMetrics() {
+	prometheus.Register(HTTPResponsesMetric)
+	prometheus.Register(HTTPLatenciesMetric)
+	prometheus.Register(TotalRequestsCounter)
+}
