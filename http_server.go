@@ -140,7 +140,6 @@ func Post_Record(c echo.Context) error {
 	logger.Debug("Got random partition ", randomPartition)
 
 	newURL := randomPartition.Address + "/record"
-	logger.Info("Sending body ", string(reqbody))
 	newReq, err := http.NewRequest(req.Method, newURL, bytes.NewReader(reqbody))
 	if err != nil {
 		logger.Error("failed to assemble forwarding request")
@@ -155,6 +154,7 @@ func Post_Record(c echo.Context) error {
 		newReq.Header[h] = val
 	}
 
+	s := time.Now()
 	resp, err := client.Do(newReq)
 	if err != nil {
 		logger.Error("failed to forward request")
@@ -168,6 +168,8 @@ func Post_Record(c echo.Context) error {
 		logger.Error(err)
 		return c.String(500, "parse response body")
 	}
+
+	logger.Info("Did post in ", time.Since(s))
 
 	return c.Blob(resp.StatusCode, resp.Header.Get("content-type"), respBody)
 }
