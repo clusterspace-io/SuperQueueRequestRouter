@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -86,7 +87,13 @@ func StartHTTPServer() {
 	Server.registerRoutes()
 
 	logger.Info("Starting SuperQueueRequestRouter on port ", GetEnvOrDefault("HTTP_PORT", "9090"))
-	Server.Echo.Logger.Info(Server.Echo.StartH2CServer(":"+GetEnvOrDefault("HTTP_PORT", "9090"), &http2.Server{}))
+	s := http.Server{
+		Handler: Server.Echo,
+		Addr:    ":" + GetEnvOrDefault("HTTP_PORT", "9090"),
+	}
+	if err := s.ListenAndServeTLS("domain.crt", "domain.key"); err != http.ErrServerClosed {
+		log.Fatal(err)
+	}
 }
 
 func (s *HTTPServer) registerRoutes() {
