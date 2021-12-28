@@ -5,7 +5,7 @@ metadata:
   labels:
     app: sqrr
 spec:
-  replicas: 1
+  replicas: 4
   selector:
     matchLabels:
       app: sqrr
@@ -15,8 +15,8 @@ spec:
         app: sqrr
     spec:
       containers:
-        - name: sq
-          image: $AWS_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/sqrr:$SEM_VER
+        - name: sqrr
+          image: danthegoodman1/superqueuerequestrouter:0.1
           env:
             - name: MY_POD_NAME
               valueFrom:
@@ -24,16 +24,16 @@ spec:
                   fieldPath: metadata.name
           command: ["/app/superQueueRequestRouter"]
           args:
-            - -etcd-hosts=etcd.default.svc.cluster.local:2379
+            - -etcd-hosts=etcd-0.etcd-service.default.svc.cluster.local:2379
           resources:
             requests:
               memory: '1024M'
-              cpu: '1'
+              cpu: '3'
             limits:
-              memory: '2048M'
-              cpu: "1"
+              memory: '1024M'
+              cpu: "3"
           ports:
-            - containerPort: 8080
+            - containerPort: 9090
               protocol: TCP
 ---
 apiVersion: v1
@@ -42,8 +42,8 @@ metadata:
   name: sqrr-service
 spec:
   ports:
-    - port: 8080
-      targetPort: 8080
+    - port: 9090
+      targetPort: 9090
       protocol: TCP
   selector:
     app: sqrr

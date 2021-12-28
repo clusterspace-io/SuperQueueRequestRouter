@@ -4,8 +4,10 @@ import (
 	"SuperQueueRequestRouter/logger"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"golang.org/x/net/http2"
 )
 
 type HTTPServer struct {
@@ -43,6 +46,7 @@ func ValidateRequest(c echo.Context, s interface{}) error {
 
 var (
 	Server *HTTPServer
+	client http.Client
 )
 
 func StartHTTPServer() {
@@ -54,12 +58,26 @@ func StartHTTPServer() {
 	Server.Echo.Use(MetricsHandler)
 	Server.Echo.Use(middleware.Logger())
 	Server.Echo.Validator = &CustomValidator{validator: validator.New()}
+	t := &http2.Transport{
+		AllowHTTP: true,
+		DialTLS: func(network, addr string, cfg *tls.Config) (net.Conn, error) {
+			return net.Dial(network, addr)
+		},
+	}
+	// t.ConnPool
+	// t.MaxIdleConns = 500
+	// t.MaxConnsPerHost = 500
+	// t.MaxIdleConnsPerHost = 500
+	client = http.Client{
+		Timeout:   10 * time.Second,
+		Transport: t,
+	}
 
 	// Count requests
 	Server.registerRoutes()
 
 	logger.Info("Starting SuperQueueRequestRouter on port ", GetEnvOrDefault("HTTP_PORT", "9090"))
-	Server.Echo.Logger.Info(Server.Echo.Start(":" + GetEnvOrDefault("HTTP_PORT", "9090")))
+	Server.Echo.Logger.Info(Server.Echo.StartH2CServer(":"+GetEnvOrDefault("HTTP_PORT", "9090"), &http2.Server{}))
 }
 
 func (s *HTTPServer) registerRoutes() {
@@ -123,9 +141,9 @@ func Post_Record(c echo.Context) error {
 	}
 
 	// Make post request on requester behalf
-	client := http.Client{}
 
 	// Get known partitions for a queue
+	s := time.Now()
 	partitions, err := GetQueuePartitions(context.Background(), queue)
 	if err != nil {
 		logger.Error("Error getting random partitions for queue ", queue)
@@ -135,9 +153,9 @@ func Post_Record(c echo.Context) error {
 	if len(*partitions) == 0 {
 		return echo.NewHTTPError(404, "Queue not found")
 	}
-	logger.Debug("Got partitions ", partitions)
+	logger.Debug("Got partitions ", partitions, " in ", time.Since(s))
+	s = time.Now()
 	randomPartition := GetRandomPartition(partitions)
-	logger.Debug("Got random partition ", randomPartition)
 
 	newURL := randomPartition.Address + "/record"
 	newReq, err := http.NewRequest(req.Method, newURL, bytes.NewReader(reqbody))
@@ -154,7 +172,7 @@ func Post_Record(c echo.Context) error {
 		newReq.Header[h] = val
 	}
 
-	s := time.Now()
+	s = time.Now()
 	resp, err := client.Do(newReq)
 	if err != nil {
 		logger.Error("failed to forward request")
@@ -169,14 +187,13 @@ func Post_Record(c echo.Context) error {
 		return c.String(500, "parse response body")
 	}
 
-	logger.Info("Did post in ", time.Since(s))
+	logger.Debug("Did post in ", time.Since(s))
 
 	return c.Blob(resp.StatusCode, resp.Header.Get("content-type"), respBody)
 }
 
 func Get_Record(c echo.Context) error {
 	req := c.Request()
-
 	// Get queue header
 	queue := c.Request().Header.Get("sq-queue")
 	if queue == "" {
@@ -184,7 +201,6 @@ func Get_Record(c echo.Context) error {
 	}
 
 	// Make post request on requester behalf
-	client := http.Client{}
 
 	// Get known partitions for a queue
 	partitions, err := GetQueuePartitions(context.Background(), queue)
@@ -255,7 +271,6 @@ func Post_AckRecord(c echo.Context) error {
 	}
 
 	// Make post request on requester behalf
-	client := http.Client{}
 
 	// Get known partitions for a queue
 	partitions, err := GetQueuePartitions(context.Background(), queue)
@@ -335,7 +350,6 @@ func Post_NackRecord(c echo.Context) error {
 	}
 
 	// Make post request on requester behalf
-	client := http.Client{}
 
 	// Get known partitions for a queue
 	partitions, err := GetQueuePartitions(context.Background(), queue)

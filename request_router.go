@@ -2,7 +2,6 @@ package main
 
 import (
 	"math/rand"
-	"time"
 )
 
 type NackRecordRequest struct {
@@ -20,7 +19,6 @@ func GetRandomPartition(p *PartitionStoredRecord) *PartitionSDRecord {
 	if len(nonDrainingPartitions) == 0 {
 		return nil
 	}
-	rand.Seed(time.Now().UnixNano())
 	index := rand.Intn(len(nonDrainingPartitions))
 	return &nonDrainingPartitions[index]
 }
