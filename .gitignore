@@ -1,2 +1,5 @@
 out.txt
 *.log
+*.pprof
+*.crt
+*.key
