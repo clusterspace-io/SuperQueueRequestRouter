@@ -73,10 +73,7 @@ func StartHTTPServer() {
 			return net.Dial(network, addr)
 		},
 	}
-	// t.ConnPool
-	// t.MaxIdleConns = 500
-	// t.MaxConnsPerHost = 500
-	// t.MaxIdleConnsPerHost = 500
+
 	client = http.Client{
 		Timeout:   10 * time.Second,
 		Transport: t,
