@@ -11,7 +11,9 @@ COPY . .
 RUN go build -o /app/superQueueRequestRouter
 
 # Need glibc
-FROM gcr.io/distroless/base
+FROM ubuntu
 COPY --from=build /app/superQueueRequestRouter /app/
+
+COPY domain.* /app/
 
 CMD ["/app/superQueueRequestRouter" ]
