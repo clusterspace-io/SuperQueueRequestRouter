@@ -88,9 +88,9 @@ func StartHTTPServer() {
 
 	logger.Info("Starting SuperQueueRequestRouter on port ", GetEnvOrDefault("HTTP_PORT", "9090"))
 	s := http.Server{
-		Handler:      Server.Echo,
-		Addr:         ":" + GetEnvOrDefault("HTTP_PORT", "9090"),
-		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)), // force disable http2
+		Handler: Server.Echo,
+		Addr:    ":" + GetEnvOrDefault("HTTP_PORT", "9090"),
+		// TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)), // force disable http2
 	}
 	if err := s.ListenAndServeTLS("domain.crt", "domain.key"); err != http.ErrServerClosed {
 		log.Fatal(err)
