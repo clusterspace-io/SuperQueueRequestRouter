@@ -23,7 +23,6 @@ func main() {
 		if perr != nil {
 			panic(perr)
 		}
-		runtime.SetCPUProfileRate(100)
 		runtime.SetBlockProfileRate(100)
 		perr = pprof.StartCPUProfile(f)
 		if perr != nil {
